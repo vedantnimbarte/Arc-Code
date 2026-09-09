@@ -232,6 +232,7 @@ pub async fn run(cfg: Config, opts: HeadlessOptions) -> Result<ExitCode> {
                 wingman_core::AgentStop::MaxTokens => "max_tokens",
                 wingman_core::AgentStop::Error => "error",
                 wingman_core::AgentStop::GateFailed => "gate_failed",
+                wingman_core::AgentStop::LoopDetected => "loop_detected",
             };
             hooks_registry.run_stop_hooks(label).await;
             break;

@@ -104,6 +104,16 @@ Wingman different; this is everything else it does.
   denylist, sandbox, and credential scrub as a foreground one, and every job is
   killed with its whole process tree when the session ends — a forgotten dev
   server doesn't outlive the agent.
+- **Two-layer loop protection.** The tools layer nudges the model when it
+  repeats a call with identical arguments (`[tools].repeat_thresholds`,
+  advisory, never blocks). Above it, a rolling window
+  (`[tools].loop_window` / `loop_warn_at` / `loop_abort_at`) counts
+  *occurrences* rather than consecutive runs — so it also sees an alternating
+  `grep X → read_file Y → grep X` cycle, which resets the consecutive chain and
+  is invisible to it — and ends the turn with stop reason `loop_detected`
+  rather than only advising. Nudging is right for an interactive session where
+  someone can hit Esc; it is not a control for `wingman pilot`, a subagent, or
+  a `--print` run in CI. Set `loop_abort_at = 0` to disable.
 - **Web tools.** Built-in `web_fetch` (URL → text) and `web_search`
   (DuckDuckGo HTML, no API key) tools pair for "look something up".
 - **Atomic multi-file patches.** The `apply_patch` tool applies a

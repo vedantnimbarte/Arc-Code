@@ -23,7 +23,33 @@ use std::sync::Arc;
 /// us).
 #[async_trait]
 pub trait ToolDispatcher: Send + Sync {
+    /// The tools whose schemas go into every request — what the model can
+    /// call directly, and what it is billed for on every turn.
     fn specs(&self) -> Vec<ToolSpec>;
+    /// Every registered tool, including any withheld from [`specs`] to keep
+    /// the per-request cost down.
+    ///
+    /// Defaults to `specs()`, so a dispatcher that withholds nothing — which
+    /// is most of them, and every one in the test suite — implements nothing.
+    /// `tool_search` is the only caller: it is how a deferred tool becomes
+    /// discoverable without its schema being resident.
+    ///
+    /// [`specs`]: ToolDispatcher::specs
+    fn all_specs(&self) -> Vec<ToolSpec> {
+        self.specs()
+    }
+    /// Just the tools withheld from [`specs`] — what `tool_search` searches.
+    ///
+    /// Separate from `all_specs() - specs()` on purpose. Computing it as a
+    /// difference means asking for `specs()`, which asks every registered tool
+    /// for its schema, including `tool_search` itself — whose schema embeds
+    /// this very list. That recurses forever. A dispatcher that defers nothing
+    /// returns nothing, which is the correct answer for it.
+    ///
+    /// [`specs`]: ToolDispatcher::specs
+    fn deferred_specs(&self) -> Vec<ToolSpec> {
+        Vec::new()
+    }
     /// Run a single tool call. Stringify any structured output before
     /// returning — the model sees a string.
     async fn dispatch(&self, name: &str, args: serde_json::Value) -> ToolOutcome;
@@ -143,6 +169,11 @@ pub enum AgentStop {
     /// `EndTurn` so callers — CI in particular — can tell "finished"
     /// from "gave up on a failing build".
     GateFailed,
+    /// The turn was stopped by [`LoopGuard`](crate::loopguard::LoopGuard):
+    /// the model kept making the same tool call and was not going to stop on
+    /// its own. Distinct from `MaxTurns` because the budget was not spent —
+    /// it was about to be spent on nothing.
+    LoopDetected,
 }
 
 /// Construction-time options for the loop.
@@ -199,6 +230,11 @@ pub struct AgentConfig {
     /// deliberately absent because a stdio server that mishandles concurrent
     /// requests is a bug we cannot reproduce from here.
     pub parallel_safe_tools: Vec<String>,
+    /// Ceiling on repeated tool calls. The tools layer nudges the model about
+    /// consecutive repeats; this one counts occurrences in a rolling window,
+    /// so it also sees alternating cycles, and it ends the turn rather than
+    /// only advising. See [`LoopGuard`](crate::loopguard::LoopGuard).
+    pub loop_guard: crate::loopguard::LoopGuard,
 }
 
 impl std::fmt::Debug for AgentConfig {
@@ -219,6 +255,7 @@ impl std::fmt::Debug for AgentConfig {
             .field("reasoning", &self.reasoning)
             .field("mutating_tools", &self.mutating_tools)
             .field("parallel_safe_tools", &self.parallel_safe_tools)
+            .field("loop_guard", &self.loop_guard)
             .finish()
     }
 }
@@ -275,6 +312,7 @@ impl Default for AgentConfig {
                 "recall_session".into(),
                 "read_session".into(),
             ],
+            loop_guard: crate::loopguard::LoopGuard::default(),
         }
     }
 }
@@ -445,6 +483,9 @@ impl AgentLoop {
             // the verification gate before an EndTurn stop is accepted.
             let mut mutated = false;
             let mut gate_attempts: usize = 0;
+            // Spans the whole user turn, not one provider round-trip: a loop
+            // that alternates across turns is still a loop.
+            let mut loop_guard = config.loop_guard.clone();
             for turn in 0..config.max_turns {
                 // Under token pressure, shrink oversized tool results in older
                 // turns *before* considering compaction. The tokens are mostly
@@ -717,6 +758,69 @@ impl AgentLoop {
                 // Eligibility checks *both* lists: requiring absence from
                 // `mutating_tools` means adding a name to `parallel_safe_tools`
                 // by mistake cannot silently race a write.
+                // Repetition ceiling. Judge the whole batch before dispatching any
+                // of it: a call that has already tripped the guard should not
+                // run one more time just because it shared a batch.
+                let mut advisories: std::collections::HashMap<String, String> =
+                    std::collections::HashMap::new();
+                let mut loop_abort: Option<String> = None;
+                for (id, name, input) in &tool_calls {
+                    match loop_guard.record(name, input) {
+                        crate::loopguard::Verdict::Fine => {}
+                        crate::loopguard::Verdict::Warn(msg) => {
+                            advisories.insert(id.clone(), msg);
+                        }
+                        crate::loopguard::Verdict::Abort(msg) => {
+                            loop_abort = Some(msg);
+                            break;
+                        }
+                    }
+                }
+
+                if let Some(reason) = loop_abort {
+                    // Every `tool_use` block must be answered by a matching
+                    // `tool_result` or the next request is malformed — so the
+                    // calls are refused explicitly rather than dropped. The
+                    // history stays replayable and a `/rewind` or a fork of
+                    // this session shows why the turn ended.
+                    let refusal = format!("[wingman] Not dispatched: {reason}");
+                    let mut refused: Vec<ContentBlock> = Vec::with_capacity(tool_calls.len());
+                    for (id, _, _) in &tool_calls {
+                        if let Some(s) = &sink {
+                            s.record(crate::ContextFact::ToolResult {
+                                id: id.clone(),
+                                full: refusal.clone(),
+                                model_view: None,
+                                is_error: true,
+                            })
+                            .await;
+                        }
+                        yield AgentEvent::ToolResult {
+                            id: id.clone(),
+                            output: refusal.clone(),
+                            is_error: true,
+                        };
+                        refused.push(ContentBlock::ToolResult {
+                            tool_use_id: id.clone(),
+                            content: refusal.clone(),
+                            is_error: true,
+                        });
+                    }
+                    history.push(Message::tool_results(refused));
+                    if let Some(hook) = &config.learning {
+                        hook.after_stop(history);
+                    }
+                    if let Some(s) = &sink {
+                        s.record(crate::ContextFact::Stop {
+                            reason: "loop_detected".into(),
+                        })
+                        .await;
+                    }
+                    yield AgentEvent::Error { message: reason };
+                    yield AgentEvent::Stop { reason: AgentStop::LoopDetected };
+                    return;
+                }
+
                 let count = tool_calls.len();
                 let concurrency = if tool_calls.iter().all(|(_, name, _)| {
                     config.parallel_safe_tools.iter().any(|t| t == name)
@@ -768,6 +872,14 @@ impl AgentLoop {
                                 crate::spill::locator_line(&path, lines)
                             );
                         }
+                    }
+                    // A repetition warning rides on the result the call
+                    // produced, where the model is already looking, rather
+                    // than as a separate message it can skim past.
+                    if let Some(msg) = advisories.get(&id) {
+                        truncated = format!("{truncated}
+
+{msg}");
                     }
                     // Record both forms. `full` is the audit trail and what a
                     // human is shown; `model_view` is what actually went into
@@ -1747,3 +1859,172 @@ mod spill_tests {
         assert!(seen.contains("line 0"));
     }
 }
+
+#[cfg(test)]
+mod loop_guard_tests {
+    //! The loop must stop a model that will not stop itself, and it must do
+    //! so leaving a history the next request can actually be built from.
+
+    use super::*;
+    use crate::{ProviderCapabilities, ProviderEventStream};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// Always asks for the same tool call. Never ends the turn — the only way
+    /// out is a guard, which is the point.
+    struct BrokenRecordProvider;
+
+    #[async_trait]
+    impl Provider for BrokenRecordProvider {
+        fn id(&self) -> &str {
+            "broken-record"
+        }
+        fn capabilities(&self) -> ProviderCapabilities {
+            ProviderCapabilities {
+                streaming: true,
+                tools: true,
+                vision: false,
+                cache_kind: crate::CacheKind::None,
+                reasoning: false,
+            }
+        }
+        async fn complete(&self, _req: CompletionRequest) -> crate::Result<ProviderEventStream> {
+            let events = vec![
+                StreamEvent::ToolUse {
+                    block: ContentBlock::ToolUse {
+                        id: "t1".into(),
+                        name: "grep".into(),
+                        input: serde_json::json!({ "pattern": "needle" }),
+                    },
+                },
+                StreamEvent::Stop {
+                    reason: StopReason::ToolUse,
+                },
+            ];
+            Ok(Box::pin(futures::stream::iter(events.into_iter().map(Ok))))
+        }
+    }
+
+    #[derive(Default)]
+    struct CountingDispatcher(AtomicUsize);
+
+    #[async_trait]
+    impl ToolDispatcher for CountingDispatcher {
+        fn specs(&self) -> Vec<ToolSpec> {
+            Vec::new()
+        }
+        async fn dispatch(&self, _name: &str, _args: serde_json::Value) -> ToolOutcome {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            ToolOutcome::ok("no matches")
+        }
+    }
+
+    async fn run_with(
+        guard: crate::loopguard::LoopGuard,
+    ) -> (Vec<AgentEvent>, usize, Vec<Message>) {
+        let tools = Arc::new(CountingDispatcher::default());
+        let mut agent = AgentLoop::new(
+            Arc::new(BrokenRecordProvider),
+            tools.clone(),
+            AgentConfig {
+                model: "m".into(),
+                // Generous, so that a stop proves the guard fired and not that
+                // the loop merely ran out of turns.
+                max_turns: 50,
+                loop_guard: guard,
+                ..Default::default()
+            },
+        );
+        let mut events = Vec::new();
+        let mut stream = agent.run("find the needle".into());
+        while let Some(ev) = stream.next().await {
+            events.push(ev);
+        }
+        drop(stream);
+        let calls = tools.0.load(Ordering::SeqCst);
+        (events, calls, agent.history().to_vec())
+    }
+
+    #[tokio::test]
+    async fn a_repeating_model_is_stopped_before_it_spends_the_turn_budget() {
+        let (events, calls, _) = run_with(crate::loopguard::LoopGuard::new(24, 0, 4)).await;
+
+        assert!(
+            matches!(
+                events.last(),
+                Some(AgentEvent::Stop {
+                    reason: AgentStop::LoopDetected
+                })
+            ),
+            "expected LoopDetected, got {:?}",
+            events.last()
+        );
+        // Three dispatched; the fourth tripped the guard and was refused.
+        assert_eq!(calls, 3, "the aborting call must not be dispatched");
+    }
+
+    /// A `tool_use` block with no matching `tool_result` makes the *next*
+    /// provider request malformed. Aborting must not leave that behind.
+    #[tokio::test]
+    async fn every_refused_call_still_gets_a_tool_result() {
+        let (_, _, history) = run_with(crate::loopguard::LoopGuard::new(24, 0, 3)).await;
+
+        let uses: Vec<&str> = history
+            .iter()
+            .flat_map(|m| m.content.iter())
+            .filter_map(|b| match b {
+                ContentBlock::ToolUse { id, .. } => Some(id.as_str()),
+                _ => None,
+            })
+            .collect();
+        let results: Vec<&str> = history
+            .iter()
+            .flat_map(|m| m.content.iter())
+            .filter_map(|b| match b {
+                ContentBlock::ToolResult { tool_use_id, .. } => Some(tool_use_id.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            uses.len(),
+            results.len(),
+            "unanswered tool_use blocks: {uses:?} vs {results:?}"
+        );
+        assert!(!uses.is_empty());
+    }
+
+    #[tokio::test]
+    async fn the_warning_reaches_the_model_on_the_result_itself() {
+        let (events, _, history) = run_with(crate::loopguard::LoopGuard::new(24, 2, 4)).await;
+
+        // The advisory is deliberately *not* on the AgentEvent, which carries
+        // the tool's own untouched output for the user to read.
+        assert!(
+            !events.iter().any(|e| matches!(
+                e,
+                AgentEvent::ToolResult { output, .. } if output.contains("not always in a row")
+            )),
+            "the user-facing result should be the tool's own output"
+        );
+        let model_saw = history
+            .iter()
+            .flat_map(|m| m.content.iter())
+            .filter_map(|b| match b {
+                ContentBlock::ToolResult { content, .. } => Some(content.as_str()),
+                _ => None,
+            })
+            .any(|c| c.contains("not always in a row"));
+        assert!(model_saw, "the model's copy should carry the advisory");
+    }
+
+    #[tokio::test]
+    async fn a_disabled_guard_leaves_the_turn_budget_in_charge() {
+        let (events, _, _) = run_with(crate::loopguard::LoopGuard::disabled()).await;
+        assert!(matches!(
+            events.last(),
+            Some(AgentEvent::Stop {
+                reason: AgentStop::MaxTurns
+            })
+        ));
+    }
+}
+

@@ -252,7 +252,7 @@ impl ToolRegistry {
             return None;
         }
 
-        let key = format!("{name}\u{1}{}", canonical_args(args));
+        let key = format!("{name}\u{1}{}", wingman_core::canonical_args(args));
         let count = {
             let mut guard = self.chain.lock().unwrap_or_else(|e| e.into_inner());
             match guard.as_mut() {
@@ -700,51 +700,6 @@ pub fn redact_output_secrets(text: &str) -> (String, usize) {
         }
     }
     (out, n)
-}
-
-/// Serialize `v` with object keys in sorted order, so two calls whose
-/// arguments differ only in property order produce the same chain key.
-///
-/// `serde_json`'s `Map` is a `BTreeMap` today and would sort anyway, but that
-/// is a default-feature accident: any crate in the dependency graph enabling
-/// `serde_json/preserve_order` flips it to insertion order for *everyone*,
-/// and the repeat guard would quietly stop matching. Sorting explicitly costs
-/// a few lines and does not depend on a transitive feature flag.
-///
-/// Array order is meaningful and is preserved.
-fn canonical_args(v: &Value) -> String {
-    fn write(v: &Value, out: &mut String) {
-        match v {
-            Value::Object(map) => {
-                let mut keys: Vec<&String> = map.keys().collect();
-                keys.sort_unstable();
-                out.push('{');
-                for (i, k) in keys.into_iter().enumerate() {
-                    if i > 0 {
-                        out.push(',');
-                    }
-                    out.push_str(&Value::String(k.clone()).to_string());
-                    out.push(':');
-                    write(&map[k], out);
-                }
-                out.push('}');
-            }
-            Value::Array(items) => {
-                out.push('[');
-                for (i, item) in items.iter().enumerate() {
-                    if i > 0 {
-                        out.push(',');
-                    }
-                    write(item, out);
-                }
-                out.push(']');
-            }
-            scalar => out.push_str(&scalar.to_string()),
-        }
-    }
-    let mut out = String::new();
-    write(v, &mut out);
-    out
 }
 
 fn tool_matches(name: &str, pattern: &str) -> bool {

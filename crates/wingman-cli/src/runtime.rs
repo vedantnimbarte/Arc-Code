@@ -1796,6 +1796,12 @@ pub async fn build_agent_registry_learn(
         // unparseable value in a hand-edited config falls back to `Off`
         // rather than refusing to start.
         reasoning: wingman_core::ReasoningEffort::parse(&cfg.reasoning).unwrap_or_default(),
+        loop_guard: wingman_core::LoopGuard::new(
+            cfg.tools.loop_window,
+            cfg.tools.loop_warn_at,
+            cfg.tools.loop_abort_at,
+        )
+        .with_exempt(cfg.tools.loop_exempt.clone()),
         ..Default::default()
     };
     let agent = AgentLoop::new(provider, registry.clone(), agent_cfg);
