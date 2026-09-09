@@ -26,11 +26,28 @@ impl Status {
     }
 }
 
-pub async fn run(cfg: Config) -> Result<ExitCode> {
+pub async fn run(cfg: Config, fix: bool, lint: bool, json: bool) -> Result<ExitCode> {
     let paths = ProjectPaths::discover(&std::env::current_dir()?);
+
+    // Config comes first, and not only for tidiness: a layer that fails to
+    // parse means `cfg` is defaults, and every check below it would then be
+    // answering questions about a configuration that is not in force.
+    let config_reports = check_config(&paths, fix, json)?;
+    let config_bad: usize = config_reports.iter().map(|r| r.findings.len()).sum();
+
+    if lint {
+        // Read-only, no probes, no network, no PATH walk. The point is a
+        // preflight that is fast enough to put in front of every CI job.
+        return Ok(if config_bad == 0 {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::from(1)
+        });
+    }
+
     println!("wingman doctor — {}", paths.root.display());
 
-    let mut bad = 0usize;
+    let mut bad = config_bad;
     let section = |title: &str| println!("\n{title}:");
     let mut emit = |s: Status| {
         if matches!(s, Status::Bad(_)) {
@@ -235,6 +252,86 @@ pub async fn run(cfg: Config) -> Result<ExitCode> {
         println!("(⚠ lines are optional extras — only ✗ lines block a session.)");
         Ok(ExitCode::from(1))
     }
+}
+
+/// Parse every config layer that exists, report what is wrong with it, and —
+/// under `--fix` — repair what can be repaired unambiguously.
+///
+/// Returns one report per file that exists, whether or not it had findings, so
+/// the JSON output says which layers were actually inspected rather than
+/// leaving the caller to guess.
+fn check_config(
+    paths: &ProjectPaths,
+    fix: bool,
+    json: bool,
+) -> Result<Vec<super::doctor_repair::FileReport>> {
+    use super::doctor_repair;
+
+    let layers = [
+        wingman_config::global_config_path().ok(),
+        Some(paths.config_file.clone()),
+    ];
+    let mut reports = Vec::new();
+    for path in layers.into_iter().flatten() {
+        if !path.exists() {
+            continue;
+        }
+        match doctor_repair::analyze(&path) {
+            Ok(r) => reports.push(r),
+            // An unreadable config is a real problem, but it is a permissions
+            // or IO problem and not one a rename can fix. Say so and move on.
+            Err(e) => {
+                if !json {
+                    Status::Bad(format!("{}: cannot read — {e}", path.display())).print();
+                }
+            }
+        }
+    }
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&reports)?);
+        // `--fix` still applies under `--json`; the report above describes
+        // what was found, and the writes below are reported by their absence
+        // from the next run.
+    } else {
+        println!("config:");
+        if reports.is_empty() {
+            Status::Warn("no config file — run `wingman config init`".into()).print();
+        }
+        for r in &reports {
+            if r.is_clean() {
+                Status::Ok(format!("{}", r.path.display())).print();
+            } else {
+                Status::Bad(format!("{}", r.path.display())).print();
+                for f in &r.findings {
+                    println!("      {}", f.describe());
+                }
+            }
+        }
+    }
+
+    if fix {
+        for r in &reports {
+            let Some(text) = &r.repaired else {
+                // Either clean, or something in it needs a person. Both are
+                // "nothing to write", and the findings above already said which.
+                continue;
+            };
+            match doctor_repair::write_repaired(&r.path, text) {
+                Ok(backup) => println!(
+                    "  ✓ repaired {} ({} key(s)); previous version kept at {}",
+                    r.path.display(),
+                    r.findings.len(),
+                    backup.display()
+                ),
+                Err(e) => println!("  ✗ could not write {}: {e}", r.path.display()),
+            }
+        }
+    } else if reports.iter().any(|r| r.repaired.is_some()) {
+        println!("  → `wingman doctor --fix` can repair these (the file is backed up first)");
+    }
+
+    Ok(reports)
 }
 
 fn bin_status(bin: &str, args: &[&str]) -> Status {

@@ -129,6 +129,13 @@ Wingman different; this is everything else it does.
   Ctrl+C and retype, which threw away everything the turn had established. The
   model is told the message arrived mid-work, so "actually, keep the patch
   small" reads as an adjustment rather than a new task.
+- **`wingman doctor --fix`.** Every config struct uses `deny_unknown_fields`,
+  so one stale or mistyped key fails the whole load with `unknown field
+  \`loop_abort\`` — naming no file, no line and no correction. `doctor` now
+  reports which file and line, and `--fix` renames unambiguous misspellings
+  after copying the file to `config.toml.bak-<timestamp>`. Only unambiguous
+  renames: a key nothing matches, or one equidistant from two candidates, is
+  reported and left alone. `--lint --json` is the read-only CI preflight.
 - **Web tools.** Built-in `web_fetch` (URL → text) and `web_search`
   (DuckDuckGo HTML, no API key) tools pair for "look something up".
 - **Atomic multi-file patches.** The `apply_patch` tool applies a
