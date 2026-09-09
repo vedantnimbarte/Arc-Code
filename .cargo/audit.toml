@@ -24,4 +24,12 @@ ignore = [
     # its internal line-wrap cache; we never call lru directly.
     "RUSTSEC-2026-0002",
     "RUSTSEC-2026-0253",
+
+    # ttf-parser 0.25.1 — unmaintained. A font parser reached only through
+    # pdf-extract, which uses it to map glyphs to characters while extracting
+    # text. `read_file` never calls it directly, and it sees only bytes from a
+    # PDF the user asked to read. Listed rather than left as a bare warning
+    # because it arrived with the `pdf` feature and should not appear
+    # unexplained.
+    "RUSTSEC-2026-0192",
 ]

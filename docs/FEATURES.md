@@ -136,6 +136,10 @@ Wingman different; this is everything else it does.
   after copying the file to `config.toml.bak-<timestamp>`. Only unambiguous
   renames: a key nothing matches, or one equidistant from two candidates, is
   reported and left alone. `--lint --json` is the read-only CI preflight.
+- **PDF reads.** `read_file` on a `.pdf` extracts its text, the same way it
+  already renders `.ipynb` cells instead of raw JSON — a spec handed over as a
+  PDF is ordinary coding context. A scan with no text layer says it needs OCR
+  rather than returning an empty string. Behind the default-on `pdf` feature.
 - **Web tools.** Built-in `web_fetch` (URL → text) and `web_search`
   (DuckDuckGo HTML, no API key) tools pair for "look something up".
 - **Atomic multi-file patches.** The `apply_patch` tool applies a

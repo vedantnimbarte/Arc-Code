@@ -70,7 +70,24 @@ impl Tool for ReadFile {
         // and pre-warm `git status`. Fire-and-forget; never blocks this read.
         crate::prefetch::warm_siblings(path.clone());
         crate::prefetch::warm_git_status_once(ctx.project_root.clone());
-        if looks_binary(&bytes) {
+        // PDFs before the binary check, because a PDF *is* binary and the
+        // refusal below is otherwise the whole answer. A spec or a design doc
+        // handed over as a PDF is ordinary coding context.
+        let is_pdf = path
+            .extension()
+            .and_then(|s| s.to_str())
+            .is_some_and(|e| e.eq_ignore_ascii_case("pdf"));
+        let bytes = if is_pdf {
+            match extract_pdf_text(&bytes) {
+                Ok(t) => t.into_bytes(),
+                Err(e) => {
+                    return ToolOutcome::err(format!("read {}: {e}", path.display()));
+                }
+            }
+        } else {
+            bytes
+        };
+        if !is_pdf && looks_binary(&bytes) {
             return ToolOutcome::err(format!("refusing to read binary file {}", path.display()));
         }
         let text = String::from_utf8_lossy(&bytes).into_owned();
@@ -112,6 +129,46 @@ impl Tool for ReadFile {
         let slice = &lines[start..end];
         ToolOutcome::ok(slice.join("\n"))
     }
+}
+
+/// Extract a PDF's text.
+///
+/// Text only, deliberately. Layout, images, and form fields are dropped: what
+/// the model can use from a spec is its prose, and a faithful rendering of a
+/// two-column layout would cost far more context than it is worth.
+///
+/// A PDF with no extractable text — a scan, or pages that are one big image —
+/// returns an error saying so rather than an empty string. Silence would read
+/// to the model as "this document is empty", which is a worse answer than
+/// "this needs OCR".
+#[cfg(feature = "pdf")]
+fn extract_pdf_text(bytes: &[u8]) -> Result<String, String> {
+    // The library panics on some malformed documents rather than returning an
+    // error, so the panic is caught and reported as the tool error it should
+    // have been.
+    //
+    // This is not total, and the difference matters here: `catch_unwind` takes
+    // unwinding panics, and a stack overflow aborts instead. RUSTSEC-2026-0187
+    // was exactly that — unbounded recursion in `lopdf` on deeply nested PDF
+    // objects — and no amount of wrapping at this level would have contained
+    // it. The `pdf-extract` floor is set to 0.12 for that reason (it carries
+    // `lopdf` >= 0.42, where the recursion is bounded); do not relax it to
+    // pick up an older release.
+    let extracted = std::panic::catch_unwind(|| pdf_extract::extract_text_from_mem(bytes))
+        .map_err(|_| "could not parse this PDF (the extractor panicked)".to_string())?
+        .map_err(|e| format!("could not extract text from this PDF: {e}"))?;
+    if extracted.trim().is_empty() {
+        return Err(
+            "this PDF has no extractable text — it is probably a scan, and would need OCR"
+                .to_string(),
+        );
+    }
+    Ok(extracted)
+}
+
+#[cfg(not(feature = "pdf"))]
+fn extract_pdf_text(_bytes: &[u8]) -> Result<String, String> {
+    Err("PDF support is not compiled in (build with the `pdf` feature)".to_string())
 }
 
 fn looks_binary(bytes: &[u8]) -> bool {
@@ -304,5 +361,119 @@ mod tests {
 
         let _ = std::fs::remove_file(&outside);
         let _ = std::fs::remove_dir_all(&project);
+    }
+}
+
+#[cfg(all(test, feature = "pdf"))]
+mod pdf_tests {
+    use super::*;
+
+    /// A minimal but genuinely valid one-page PDF with a single text object,
+    /// built here rather than committed as a fixture so the test says exactly
+    /// what it is feeding the parser.
+    fn sample_pdf(body: &str) -> Vec<u8> {
+        let content = format!("BT /F1 24 Tf 72 700 Td ({body}) Tj ET");
+        let objs: Vec<Vec<u8>> = vec![
+            b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R                /Resources << /Font << /F1 5 0 R >> >> >>"
+                .to_vec(),
+            format!(
+                "<< /Length {} >>
+stream
+{content}
+endstream",
+                content.len()
+            )
+            .into_bytes(),
+            b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_vec(),
+        ];
+        let mut out: Vec<u8> = b"%PDF-1.4
+"
+        .to_vec();
+        let mut offsets = Vec::new();
+        for (i, o) in objs.iter().enumerate() {
+            offsets.push(out.len());
+            out.extend_from_slice(
+                format!(
+                    "{} 0 obj
+",
+                    i + 1
+                )
+                .as_bytes(),
+            );
+            out.extend_from_slice(o);
+            out.extend_from_slice(
+                b"
+endobj
+",
+            );
+        }
+        let xref = out.len();
+        out.extend_from_slice(
+            format!(
+                "xref
+0 {}
+0000000000 65535 f 
+",
+                objs.len() + 1
+            )
+            .as_bytes(),
+        );
+        for off in &offsets {
+            out.extend_from_slice(
+                format!(
+                    "{off:010} 00000 n 
+"
+                )
+                .as_bytes(),
+            );
+        }
+        out.extend_from_slice(
+            format!(
+                "trailer
+<< /Size {} /Root 1 0 R >>
+startxref
+{xref}
+%%EOF
+",
+                objs.len() + 1
+            )
+            .as_bytes(),
+        );
+        out
+    }
+
+    #[test]
+    fn text_comes_out_of_a_real_pdf() {
+        let text = extract_pdf_text(&sample_pdf("Wingman reads PDFs")).expect("extractable");
+        let flat: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(flat.contains("Wingman reads PDFs"), "got {flat:?}");
+    }
+
+    /// Garbage in must not take the process with it. `pdf-extract` panics on
+    /// some malformed input, and a tool call that aborts the agent is a much
+    /// worse failure than one that returns an error.
+    #[test]
+    fn a_corrupt_pdf_is_an_error_not_a_panic() {
+        let err = extract_pdf_text(
+            b"%PDF-1.4
+this is not really a pdf at all",
+        )
+        .expect_err("should not succeed");
+        assert!(!err.is_empty());
+    }
+
+    #[test]
+    fn empty_input_is_an_error() {
+        assert!(extract_pdf_text(b"").is_err());
+    }
+
+    /// A scan has pages but no text layer. Reporting that plainly beats
+    /// handing the model an empty string it will read as "empty document".
+    #[test]
+    fn a_pdf_with_no_text_layer_says_it_needs_ocr() {
+        let err = extract_pdf_text(&sample_pdf("")).expect_err("no text");
+        assert!(err.contains("OCR"), "got {err:?}");
     }
 }
