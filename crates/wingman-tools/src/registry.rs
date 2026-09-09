@@ -31,6 +31,11 @@ pub struct ToolRegistry {
     /// its own `ToolRegistry`, so a child's repetition can never trip its
     /// parent's counter and no per-agent keying is needed here.
     chain: std::sync::Mutex<Option<RepeatChain>>,
+    /// Name patterns whose schemas are withheld from `specs()` and reached
+    /// through `tool_search` / `tool_call` instead (`[tools].defer`). Empty
+    /// means every registered tool is in every request, which is the
+    /// behaviour this registry has always had.
+    defer: Vec<String>,
     /// Tools this registry refuses to hold, from `[tools].preset` and
     /// `[tools].disabled_tools`.
     ///
@@ -131,6 +136,7 @@ impl ToolRegistry {
             redact_output: true,
             tool_timeout: None,
             repeat: RepeatPolicy::default(),
+            defer: Vec::new(),
             chain: std::sync::Mutex::new(None),
             removals: ToolRemovals::default(),
         }
@@ -159,6 +165,56 @@ impl ToolRegistry {
     pub fn with_tool_timeout(mut self, secs: u64) -> Self {
         self.tool_timeout = (secs > 0).then(|| std::time::Duration::from_secs(secs));
         self
+    }
+
+    /// Withhold tools matching any of `patterns` from the request, so their
+    /// schemas stop being billed on every turn. A trailing `*` matches by
+    /// prefix (`mcp__*`).
+    ///
+    /// The meta-tools are never deferrable: withholding the mechanism that
+    /// finds withheld tools would leave the deferred set unreachable.
+    #[must_use]
+    pub fn with_deferred(mut self, patterns: Vec<String>) -> Self {
+        self.defer = patterns;
+        self
+    }
+
+    /// Whether anything is actually deferred, so the caller only registers the
+    /// two meta-tools when they have something to do. Registering them
+    /// unconditionally would *add* two schemas to every session to save none.
+    pub fn defers_anything(&self) -> bool {
+        if self.defer.is_empty() {
+            return false;
+        }
+        let guard = self.tools.read().unwrap_or_else(|e| e.into_inner());
+        guard.keys().any(|name| self.is_deferred(name))
+    }
+
+    /// Whether `name` is withheld from the request.
+    fn is_deferred(&self, name: &str) -> bool {
+        !crate::builtin::is_meta_tool(name) && self.defer.iter().any(|p| tool_matches(name, p))
+    }
+
+    /// Schemas of the registered tools whose names satisfy `keep`.
+    ///
+    /// The clone-then-drop is load-bearing, not tidiness: `Tool::spec()` is
+    /// allowed to consult the registry — `tool_search` builds its description
+    /// from the deferred list — and calling it while still holding the read
+    /// guard re-enters the lock. A recursive shared acquisition is not
+    /// guaranteed to succeed by `std`, and on Windows' SRWLock it deadlocks
+    /// outright, which is exactly how this first showed up.
+    fn collect_specs(&self, keep: impl Fn(&str) -> bool) -> Vec<ToolSpec> {
+        let held: Vec<Arc<dyn Tool>> = {
+            let guard = self.tools.read().unwrap_or_else(|e| e.into_inner());
+            guard
+                .iter()
+                .filter(|(name, _)| keep(name))
+                .map(|(_, t)| t.clone())
+                .collect()
+        };
+        let mut out: Vec<ToolSpec> = held.iter().map(|t| t.spec()).collect();
+        out.sort_by(|a, b| a.name.cmp(&b.name));
+        out
     }
 
     /// Configure the repeat guard. Empty `thresholds` disables it.
@@ -479,10 +535,20 @@ impl ToolRegistry {
 #[async_trait]
 impl ToolDispatcher for ToolRegistry {
     fn specs(&self) -> Vec<ToolSpec> {
-        let guard = self.tools.read().unwrap_or_else(|e| e.into_inner());
-        let mut out: Vec<ToolSpec> = guard.values().map(|t| t.spec()).collect();
-        out.sort_by(|a, b| a.name.cmp(&b.name));
-        out
+        self.collect_specs(|name| !self.is_deferred(name))
+    }
+
+    /// Everything registered, deferred or not.
+    fn all_specs(&self) -> Vec<ToolSpec> {
+        self.collect_specs(|_| true)
+    }
+
+    /// Only what is withheld from `specs()`.
+    fn deferred_specs(&self) -> Vec<ToolSpec> {
+        if self.defer.is_empty() {
+            return Vec::new();
+        }
+        self.collect_specs(|name| self.is_deferred(name))
     }
 
     async fn dispatch(&self, name: &str, args: Value) -> ToolOutcome {

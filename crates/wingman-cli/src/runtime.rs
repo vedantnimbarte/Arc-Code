@@ -618,7 +618,8 @@ pub(crate) fn base_registry(
             cfg.tools.repeat_thresholds.clone(),
             cfg.tools.repeat_exempt.clone(),
         )
-        .with_custom_tools(&cfg.tools.custom);
+        .with_custom_tools(&cfg.tools.custom)
+        .with_deferred(cfg.tools.defer.clone());
 
     // Air-gapped guard: hard-remove the network tools so no code leaves the
     // box. `unregister` takes &self (the map is interior-mutable), so no `mut`
@@ -628,6 +629,40 @@ pub(crate) fn base_registry(
         reg.unregister("web_search");
     }
     reg
+}
+
+/// Register `tool_search` / `tool_call` when `[tools].defer` actually hides
+/// something.
+///
+/// Call this *last*, after every other registration: `defers_anything` asks
+/// what is in the registry now, and MCP tools arrive only when their servers
+/// connect. Asking earlier answers "nothing" and silently strands every
+/// `mcp__*` tool the config meant to defer.
+///
+/// Gated on there being something to find, because the two meta-tools are
+/// themselves two schemas: registering them when nothing is deferred would
+/// grow the request in order to shrink nothing.
+///
+/// Shared with `wingman context` so the number it prints is the number a
+/// session actually pays. A context report that omitted these two would
+/// understate the cost of the very setting it is meant to help tune.
+pub(crate) fn register_deferred_access(registry: &Arc<ToolRegistry>, cfg: &Config) {
+    if !registry.defers_anything() {
+        return;
+    }
+    // Coerce first, then downgrade: unsized coercion keeps the same
+    // allocation, so this weak pointer stays valid as long as `registry`.
+    let as_dispatcher: Arc<dyn wingman_core::ToolDispatcher> = registry.clone();
+    let weak = Arc::downgrade(&as_dispatcher);
+    registry.register_arc(Arc::new(wingman_tools::builtin::ToolSearch::new(
+        weak.clone(),
+    )));
+    registry.register_arc(Arc::new(wingman_tools::builtin::ToolCall::new(weak)));
+    tracing::info!(
+        target: "wingman::tools",
+        patterns = ?cfg.tools.defer,
+        "deferring tool schemas behind tool_search/tool_call"
+    );
 }
 
 /// Honor `[tools].preset` and `[tools].disabled_tools`.
@@ -1749,6 +1784,8 @@ pub async fn build_agent_registry_learn(
         registry.register_arc(Arc::new(wingman_tools::builtin::RunPlan::new(weak)));
         tracing::info!(target: "wingman::tools", "run_plan enabled");
     }
+
+    register_deferred_access(&registry, cfg);
 
     // Compose the system prompt: base + memory index + skills catalog.
     let memory_store = learn

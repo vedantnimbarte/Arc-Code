@@ -20,7 +20,11 @@ pub async fn run(cfg: Config, json: bool) -> Result<ExitCode> {
 
     // Build the same registry a real session would, so the tool list and its
     // schemas are the actual ones — not an approximation.
-    let registry = crate::runtime::build_registry(&cfg, mode).await?;
+    // Wrapped and given its deferred-access tools so the count below is the
+    // one a session actually pays, including the two meta-tool schemas that
+    // `[tools].defer` adds in exchange for the ones it hides.
+    let registry = std::sync::Arc::new(crate::runtime::build_registry(&cfg, mode).await?);
+    crate::runtime::register_deferred_access(&registry, &cfg);
     let specs = {
         use wingman_core::ToolDispatcher;
         registry.specs()

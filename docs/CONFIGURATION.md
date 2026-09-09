@@ -92,6 +92,24 @@ loop_abort_at = 8
 # the same reason, without needing this key.)
 loop_exempt = ["update_tasks", "task_complete"]
 
+# Withhold these tools' schemas from every request; the model reaches them
+# through `tool_search` (find by keyword, get the schema) and `tool_call`
+# (invoke by name) instead. Trailing `*` matches by prefix. Empty = every
+# tool is in every request.
+#
+# `preset` below is the static answer to the same cost: it decides what a
+# session is *for* and drops the rest. This is the dynamic one, for tools
+# worth having but rarely used. An MCP server's twenty schemas are billed on
+# every turn and wanted on perhaps one, so this trades a round trip in that
+# turn for the schemas in the other forty-nine.
+#
+# Deferring is not disabling: a deferred tool is registered, permission-gated
+# and callable exactly as before, and `tool_call` dispatches it through the
+# same gate as a direct call. The two meta-tools cost two schemas, so this is
+# a saving only when it hides more than it adds — `wingman context` reports
+# the real number either way, including them.
+defer = []                    # e.g. ["mcp__*"]
+
 # Seconds `ask_user` waits for an answer from the Wingman desktop popup when
 # it is running. 0 (default) keeps the tool's long-standing behaviour: with no
 # interactive terminal it returns "proceed with your best judgment" at once.

@@ -247,6 +247,22 @@ pub struct ToolsConfig {
     /// guard will end the turn for doing its job.
     #[serde(default = "default_loop_exempt")]
     pub loop_exempt: Vec<String>,
+    /// Tool-name patterns whose schemas are withheld from every request and
+    /// reached through `tool_search` / `tool_call` instead. A trailing `*`
+    /// matches by prefix. Empty (default) puts every tool in every request.
+    ///
+    /// `preset` above is the static answer to the same cost — it decides what
+    /// a session is *for* and drops the rest. This is the dynamic one, for
+    /// tools worth having but rarely used: an MCP server's twenty schemas are
+    /// billed on all of a session's turns and wanted on perhaps one, so
+    /// `defer = ["mcp__*"]` trades a round trip in that turn for the schemas
+    /// in the other forty-nine.
+    ///
+    /// Deferring is not disabling: a deferred tool is registered, gated, and
+    /// callable exactly as before. `wingman context` reports what the change
+    /// bought.
+    #[serde(default)]
+    pub defer: Vec<String>,
     /// Restrict the session to one named tool preset (`--preset`, or
     /// `[tools].preset` in config). Empty = every registered tool.
     ///
@@ -441,6 +457,7 @@ impl Default for ToolsConfig {
             loop_warn_at: default_loop_warn_at(),
             loop_abort_at: default_loop_abort_at(),
             loop_exempt: default_loop_exempt(),
+            defer: Vec::new(),
             preset: String::new(),
             presets: std::collections::HashMap::new(),
             spill_tool_output: true,

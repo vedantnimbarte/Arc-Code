@@ -114,6 +114,15 @@ Wingman different; this is everything else it does.
   rather than only advising. Nudging is right for an interactive session where
   someone can hit Esc; it is not a control for `wingman pilot`, a subagent, or
   a `--print` run in CI. Set `loop_abort_at = 0` to disable.
+- **Deferred tool schemas.** `[tools].defer = ["mcp__*"]` withholds matching
+  tools' schemas from every request; the model finds them with `tool_search`
+  (keyword → name, description and schema) and invokes them with `tool_call`.
+  Every tool's schema is billed on every turn, and an MCP server's twenty are
+  wanted on perhaps one — this trades a round trip in that turn for the
+  schemas in the other forty-nine. Deferring is not disabling: `tool_call`
+  dispatches through the same permission gate, hooks, audit trail and
+  redaction as a direct call. `wingman context` reports the real total,
+  including the two meta-tools it adds.
 - **Steering a running turn.** Type while the agent is working and press
   Enter: the message is folded into the turn at the next provider round-trip
   instead of starting a new one. Previously the only way to redirect was
