@@ -100,7 +100,7 @@ irm https://raw.githubusercontent.com/vedantnimbarte/Wingman/main/scripts/instal
 Downloads the `wingman` binary for your platform from the latest
 [release](https://github.com/vedantnimbarte/Wingman/releases) and puts it on
 your `PATH` (default `~/.local/bin`; override with `WINGMAN_INSTALL_DIR`, pin a
-tag with `VERSION=v0.3.0`).
+tag with `VERSION=v0.4.0`).
 
 Prebuilt targets: Linux x86_64/aarch64 (glibc ≥ 2.38 — Ubuntu 24.04+, Debian
 13+, Fedora 39+), macOS Apple silicon, Windows x86_64. On anything else, build

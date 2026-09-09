@@ -1,7 +1,7 @@
 {
   "name": "wingman-notify-bundle",
   "description": "Bundling only. The Tauri CLI lives here because this is the directory holding tauri.conf.json, which is the cwd it and `beforeBuildCommand` both assume. The UI is its own npm project under ui/.",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "license": "Apache-2.0",
   "private": true,
   "scripts": {

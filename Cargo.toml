@@ -29,7 +29,7 @@ members = [
 exclude = ["desktop/notifier"]
 
 [workspace.package]
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 rust-version = "1.88"
 license = "Apache-2.0"
@@ -37,22 +37,22 @@ repository = "https://github.com/vedantnimbarte/Wingman"
 authors = ["wingman contributors"]
 
 [workspace.dependencies]
-wingman-cli = { path = "crates/wingman-cli", version = "0.3.0" }
-wingman-config = { path = "crates/wingman-config", version = "0.3.0" }
-wingman-core = { path = "crates/wingman-core", version = "0.3.0" }
-wingman-tui = { path = "crates/wingman-tui", version = "0.3.0" }
-wingman-providers = { path = "crates/wingman-providers", version = "0.3.0" }
-wingman-tools = { path = "crates/wingman-tools", version = "0.3.0" }
-wingman-session = { path = "crates/wingman-session", version = "0.3.0" }
-wingman-rag = { path = "crates/wingman-rag", version = "0.3.0", default-features = false }
-wingman-mcp = { path = "crates/wingman-mcp", version = "0.3.0" }
-wingman-skills = { path = "crates/wingman-skills", version = "0.3.0" }
-wingman-learn = { path = "crates/wingman-learn", version = "0.3.0" }
-wingman-ts = { path = "crates/wingman-ts", version = "0.3.0", default-features = false }
-wingman-autonomous = { path = "crates/wingman-autonomous", version = "0.3.0" }
-wingman-lsp = { path = "crates/wingman-lsp", version = "0.3.0" }
-wingman-browser = { path = "crates/wingman-browser", version = "0.3.0", default-features = false }
-wingman-board = { path = "crates/wingman-board", version = "0.3.0" }
+wingman-cli = { path = "crates/wingman-cli", version = "0.4.0" }
+wingman-config = { path = "crates/wingman-config", version = "0.4.0" }
+wingman-core = { path = "crates/wingman-core", version = "0.4.0" }
+wingman-tui = { path = "crates/wingman-tui", version = "0.4.0" }
+wingman-providers = { path = "crates/wingman-providers", version = "0.4.0" }
+wingman-tools = { path = "crates/wingman-tools", version = "0.4.0" }
+wingman-session = { path = "crates/wingman-session", version = "0.4.0" }
+wingman-rag = { path = "crates/wingman-rag", version = "0.4.0", default-features = false }
+wingman-mcp = { path = "crates/wingman-mcp", version = "0.4.0" }
+wingman-skills = { path = "crates/wingman-skills", version = "0.4.0" }
+wingman-learn = { path = "crates/wingman-learn", version = "0.4.0" }
+wingman-ts = { path = "crates/wingman-ts", version = "0.4.0", default-features = false }
+wingman-autonomous = { path = "crates/wingman-autonomous", version = "0.4.0" }
+wingman-lsp = { path = "crates/wingman-lsp", version = "0.4.0" }
+wingman-browser = { path = "crates/wingman-browser", version = "0.4.0", default-features = false }
+wingman-board = { path = "crates/wingman-board", version = "0.4.0" }
 
 tokio = { version = "1.40", features = ["rt-multi-thread", "macros", "fs", "io-util", "process", "signal", "sync", "time"] }
 async-trait = "0.1"

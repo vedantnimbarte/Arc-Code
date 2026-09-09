@@ -1,7 +1,7 @@
 {
   "name": "wingman-panel",
   "description": "Wingman's web control panel — served by `wingman serve`, embedded in the binary.",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
