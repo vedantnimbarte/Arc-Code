@@ -140,6 +140,11 @@ Wingman different; this is everything else it does.
   already renders `.ipynb` cells instead of raw JSON — a spec handed over as a
   PDF is ordinary coding context. A scan with no text layer says it needs OCR
   rather than returning an empty string. Behind the default-on `pdf` feature.
+- **Device pairing for `wingman serve`.** `--pair` prints a single-use,
+  10-minute code that another device exchanges once for the API token, instead
+  of hand-carrying a 43-character secret to it. Enrolment only — the paired
+  device gets the same token and the same ceiling. See
+  [HTTP-API.md](HTTP-API.md#pairing-a-device).
 - **Web tools.** Built-in `web_fetch` (URL → text) and `web_search`
   (DuckDuckGo HTML, no API key) tools pair for "look something up".
 - **Atomic multi-file patches.** The `apply_patch` tool applies a

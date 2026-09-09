@@ -299,6 +299,11 @@ pub enum Command {
         /// lets any request run arbitrary shell commands on this machine.
         #[arg(long)]
         allow_yolo: bool,
+        /// Print a single-use pairing link so another device can fetch the
+        /// API token once, instead of you carrying a 43-character secret to
+        /// it by hand. Valid for 10 minutes; pairs one device.
+        #[arg(long)]
+        pair: bool,
     },
     /// Distill durable facts from a past session into a pending-review file
     /// (`.wingman/pending-memories.md`). Uses the fast model when configured.
@@ -1150,6 +1155,7 @@ pub async fn run() -> Result<ExitCode> {
             init_token,
             list,
             allow_yolo,
+            pair,
         }) => {
             crate::serve::run(
                 load_config()?,
@@ -1158,6 +1164,7 @@ pub async fn run() -> Result<ExitCode> {
                     init_token,
                     list,
                     allow_yolo,
+                    pair,
                 },
             )
             .await

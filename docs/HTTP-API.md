@@ -127,6 +127,33 @@ cookie silently substituted. `Secure` is not set — the panel is served over
 plain HTTP on loopback or a LAN address, where a `Secure` cookie is discarded;
 see [WEB-UI.md](WEB-UI.md) for the full reasoning and what it costs.
 
+### Pairing a device
+
+Getting the token onto a phone otherwise means moving a 43-character secret
+there by hand, which in practice means pasting it into a chat app or a note —
+putting the durable credential somewhere it outlives the moment.
+
+```bash
+wingman serve --pair
+```
+
+prints a single-use code, valid for 10 minutes, that can be exchanged **once**
+for the API token:
+
+| Method | Path | Effect |
+|---|---|---|
+| `POST` | `/v1/pair/redeem` | Body `{"code":"…"}`. Returns `{"token":"…"}` on the first correct redemption and burns the code. Ungated, because redeeming *is* the authentication. `401` for a wrong code, `410` for one already used or expired, `404` when pairing was not opened, `409` when the server has no token to hand out. |
+
+This is **enrolment, not authority**. Every paired device ends up holding the
+same token with the same ceiling; per-token scopes remain a non-goal. What the
+code buys is that it is short-lived and single-use, so an intercepted one is
+worth minutes rather than forever — and using it is *detectable*, because the
+intended device's redemption then fails saying the code was already spent. If
+that happens, rotate with `wingman serve --init-token`.
+
+There is no endpoint that mints codes: pairing opens only for a run started
+with `--pair`, so someone who reaches the daemon cannot ask it to start.
+
 ---
 
 ## Project scoping

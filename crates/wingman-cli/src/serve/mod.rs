@@ -24,6 +24,7 @@ mod board;
 mod child;
 mod http;
 mod notifications;
+pub mod pairing;
 mod pilot;
 pub mod projects;
 mod push;
@@ -55,6 +56,10 @@ pub struct ServeOptions {
     pub list: bool,
     /// Required to run with a `yolo` ceiling.
     pub allow_yolo: bool,
+    /// Open pairing for this run: mint a single-use code, print the one-paste
+    /// link, and accept one `POST /v1/pair/redeem`. Off unless asked, so a
+    /// reachable daemon cannot be talked into minting a code.
+    pub pair: bool,
 }
 
 /// Everything a request handler needs. Shared behind an `Arc` across
@@ -68,6 +73,9 @@ pub struct ServeState {
     pub started: Instant,
     /// Bounds concurrent agent turns across all projects.
     pub turns: Semaphore,
+    /// The pending pairing code, when `--pair` opened one. `None` means
+    /// `/v1/pair/redeem` has nothing to offer and says so.
+    pub pairing: std::sync::Mutex<Option<pairing::Bootstrap>>,
 }
 
 impl ServeState {
@@ -129,6 +137,27 @@ pub async fn run(cfg: Config, opts: ServeOptions) -> Result<ExitCode> {
         return Ok(ExitCode::SUCCESS);
     }
 
+    // Minted before the listener so the code is on screen by the time the
+    // port is answering, and refused up front when there is no token to hand
+    // out — pairing into an unauthenticated server would return nothing.
+    let bootstrap = match (opts.pair, token.is_some()) {
+        (true, true) => Some(pairing::Bootstrap::issue()),
+        (true, false) => {
+            anyhow::bail!(
+                "--pair needs a token to hand out, and this server has none                  (loopback with no `[serve].token`). Run `wingman serve --init-token` first."
+            );
+        }
+        (false, _) => None,
+    };
+    if let Some(b) = &bootstrap {
+        eprintln!(
+            "
+{}
+",
+            pairing::instructions(&bind, b.code())
+        );
+    }
+
     let state = Arc::new(ServeState {
         turns: Semaphore::new(cfg.serve.max_concurrent_turns.max(1)),
         cfg,
@@ -136,6 +165,7 @@ pub async fn run(cfg: Config, opts: ServeOptions) -> Result<ExitCode> {
         token,
         ceiling,
         started: Instant::now(),
+        pairing: std::sync::Mutex::new(bootstrap),
     });
 
     // Put the allowlisted repos on the board once, so the panel opens onto a
@@ -226,6 +256,7 @@ mod tests {
             token: None,
             ceiling,
             started: Instant::now(),
+            pairing: std::sync::Mutex::new(None),
             turns: Semaphore::new(1),
         }
     }

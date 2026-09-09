@@ -33,7 +33,7 @@ wingman [OPTIONS] [COMMAND]
 | `knows`              | Show what Wingman knows about this project: memories, skills, model routing, the verification gate, and index freshness. |
 | `doctor`             | Health check: config, provider credentials, local model servers, the semantic index, language servers on PATH, and git/gh tooling. `--fix` repairs config keys that are unambiguous misspellings (backing the file up first); `--lint` runs config checks only — read-only, no probes, non-zero on a problem, for CI; `--json` emits findings as JSON. |
 | `mcp-serve`          | Expose Wingman itself as an MCP server over stdio (tools + memory resources). Read-only by default; raise with `--mode`. |
-| `serve`              | Serve the HTTP/SSE API so another machine, a phone, or CI can drive Wingman. `--addr`, `--init-token`, `--list`, `--allow-yolo`. See [HTTP-API.md](HTTP-API.md). |
+| `serve`              | Serve the HTTP/SSE API so another machine, a phone, or CI can drive Wingman. `--addr`, `--init-token`, `--list`, `--allow-yolo`, `--pair`. See [HTTP-API.md](HTTP-API.md). |
 | `explain`            | Explain-and-teach the working diff (per-file what/why). `--local <base>`, `--staged`. |
 | `bench`              | Benchmark harness: time-to-first-token, tokens/task, verified-done rate. `--suite <file.jsonl>`, `--json`. |
 | `distill`            | Distill durable facts from a past session into a pending-review file. `--session <path>`. |
