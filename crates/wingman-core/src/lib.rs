@@ -14,6 +14,7 @@ pub mod message;
 pub mod pricing;
 pub mod provider;
 pub mod spill;
+pub mod steer;
 pub mod stream;
 pub mod tokens;
 pub mod tool;
@@ -33,6 +34,7 @@ pub use provider::{
     ReasoningEffort,
 };
 pub use spill::SpillStore;
+pub use steer::SteerInbox;
 pub use stream::{ProviderEventStream, StopReason, StreamEvent};
 pub use tokens::{
     estimate_history_tokens, estimate_tokens, CompactPlan, Compactor, ToolOutputBudget,

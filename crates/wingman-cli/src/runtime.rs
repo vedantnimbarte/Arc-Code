@@ -1796,6 +1796,10 @@ pub async fn build_agent_registry_learn(
         // unparseable value in a hand-edited config falls back to `Off`
         // rather than refusing to start.
         reasoning: wingman_core::ReasoningEffort::parse(&cfg.reasoning).unwrap_or_default(),
+        // Always present: whether steering is *usable* depends on the front
+        // end having somewhere to type, not on configuration, and a `None`
+        // here would make `/steer` fail in a way no setting explains.
+        steer: Some(Arc::new(wingman_core::SteerInbox::new())),
         loop_guard: wingman_core::LoopGuard::new(
             cfg.tools.loop_window,
             cfg.tools.loop_warn_at,

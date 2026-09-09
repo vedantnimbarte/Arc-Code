@@ -182,6 +182,12 @@ pub async fn run(cfg: Config, opts: HeadlessOptions) -> Result<ExitCode> {
                     write!(stdout, "{text}").ok();
                     stdout.flush().ok();
                 }
+                // stderr for the same reason as reasoning: a steer is a note
+                // about the run, not part of the answer being captured.
+                AgentEvent::Steered { text } => {
+                    writeln!(stderr, "[steered] {text}").ok();
+                    stderr.flush().ok();
+                }
                 // stderr, not stdout: `wingman --print … > out.txt` must still
                 // capture the answer and nothing else.
                 AgentEvent::ThinkingDelta { text } => {

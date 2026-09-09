@@ -153,6 +153,9 @@ pub enum AgentEvent {
     /// Result of the post-edit verification gate. Emitted before `Stop`
     /// whenever a gate is configured and mutating tools ran this user turn.
     Verification { passed: bool, summary: String },
+    /// A steer was folded into the running turn, so a UI can show it in the
+    /// transcript where it actually landed rather than where it was typed.
+    Steered { text: String },
     /// Recoverable error surfaced to the UI.
     Error { message: String },
 }
@@ -235,6 +238,10 @@ pub struct AgentConfig {
     /// so it also sees alternating cycles, and it ends the turn rather than
     /// only advising. See [`LoopGuard`](crate::loopguard::LoopGuard).
     pub loop_guard: crate::loopguard::LoopGuard,
+    /// Where a UI leaves guidance for a turn that is already running. Drained
+    /// between provider round-trips. `None` means steering is unavailable and
+    /// the caller should send an ordinary prompt instead.
+    pub steer: Option<Arc<crate::steer::SteerInbox>>,
 }
 
 impl std::fmt::Debug for AgentConfig {
@@ -256,6 +263,7 @@ impl std::fmt::Debug for AgentConfig {
             .field("mutating_tools", &self.mutating_tools)
             .field("parallel_safe_tools", &self.parallel_safe_tools)
             .field("loop_guard", &self.loop_guard)
+            .field("steer", &self.steer.as_ref().map(|_| "<inbox>"))
             .finish()
     }
 }
@@ -313,6 +321,7 @@ impl Default for AgentConfig {
                 "read_session".into(),
             ],
             loop_guard: crate::loopguard::LoopGuard::default(),
+            steer: None,
         }
     }
 }
@@ -452,6 +461,12 @@ impl AgentLoop {
     }
 
     /// The base system prompt this loop sends, before any per-turn injection.
+    /// Handle on this loop's steer inbox, for a UI that wants to redirect a
+    /// turn while it runs. `None` when steering was not configured.
+    pub fn steer_handle(&self) -> Option<Arc<crate::steer::SteerInbox>> {
+        self.config.steer.clone()
+    }
+
     pub fn system_prompt(&self) -> Option<&str> {
         self.config.system.as_deref()
     }
@@ -487,6 +502,24 @@ impl AgentLoop {
             // that alternates across turns is still a loop.
             let mut loop_guard = config.loop_guard.clone();
             for turn in 0..config.max_turns {
+                // Fold in anything the user said while this turn was running.
+                // Here rather than mid-stream: the history has to be
+                // well-formed when the next request is composed, and this is
+                // the point where it is.
+                if let Some(inbox) = &config.steer {
+                    for message in inbox.drain() {
+                        let framed = crate::steer::format(&message);
+                        if let Some(s) = &sink {
+                            s.record(crate::ContextFact::UserMessage {
+                                text: framed.clone(),
+                            })
+                            .await;
+                        }
+                        history.push(Message::user_text(framed));
+                        yield AgentEvent::Steered { text: message };
+                    }
+                }
+
                 // Under token pressure, shrink oversized tool results in older
                 // turns *before* considering compaction. The tokens are mostly
                 // in tool output while the value is mostly in what the
@@ -2028,3 +2061,177 @@ mod loop_guard_tests {
     }
 }
 
+#[cfg(test)]
+mod steer_tests {
+    //! A steer must reach the model *during* the turn it was sent for, and it
+    //! must not be able to corrupt the history it is spliced into.
+
+    use super::*;
+    use crate::{ProviderCapabilities, ProviderEventStream};
+    use std::sync::Mutex;
+
+    /// Calls a tool on the first round trip, then ends the turn — so there is
+    /// a second request for a steer to land in front of. Records every request
+    /// it is given.
+    struct TwoStepProvider {
+        seen: Arc<Mutex<Vec<CompletionRequest>>>,
+        /// Pushed to the inbox after the first request, imitating a user
+        /// typing while the turn is in flight.
+        inbox: Arc<crate::steer::SteerInbox>,
+    }
+
+    #[async_trait]
+    impl Provider for TwoStepProvider {
+        fn id(&self) -> &str {
+            "two-step"
+        }
+        fn capabilities(&self) -> ProviderCapabilities {
+            ProviderCapabilities {
+                streaming: true,
+                tools: true,
+                vision: false,
+                cache_kind: crate::CacheKind::None,
+                reasoning: false,
+            }
+        }
+        async fn complete(&self, req: CompletionRequest) -> crate::Result<ProviderEventStream> {
+            let n = {
+                let mut seen = self.seen.lock().unwrap();
+                seen.push(req);
+                seen.len()
+            };
+            let events = if n == 1 {
+                self.inbox.push("actually, keep the patch small");
+                vec![
+                    StreamEvent::ToolUse {
+                        block: ContentBlock::ToolUse {
+                            id: "t1".into(),
+                            name: "read_file".into(),
+                            input: serde_json::json!({ "path": "a.rs" }),
+                        },
+                    },
+                    StreamEvent::Stop {
+                        reason: StopReason::ToolUse,
+                    },
+                ]
+            } else {
+                vec![
+                    StreamEvent::TextDelta {
+                        text: "done".into(),
+                    },
+                    StreamEvent::Stop {
+                        reason: StopReason::EndTurn,
+                    },
+                ]
+            };
+            Ok(Box::pin(futures::stream::iter(events.into_iter().map(Ok))))
+        }
+    }
+
+    struct OkTool;
+    #[async_trait]
+    impl ToolDispatcher for OkTool {
+        fn specs(&self) -> Vec<ToolSpec> {
+            Vec::new()
+        }
+        async fn dispatch(&self, _n: &str, _a: serde_json::Value) -> ToolOutcome {
+            ToolOutcome::ok("contents")
+        }
+    }
+
+    async fn run() -> (Vec<CompletionRequest>, Vec<AgentEvent>) {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let inbox = Arc::new(crate::steer::SteerInbox::new());
+        let mut agent = AgentLoop::new(
+            Arc::new(TwoStepProvider {
+                seen: seen.clone(),
+                inbox: inbox.clone(),
+            }),
+            Arc::new(OkTool),
+            AgentConfig {
+                model: "m".into(),
+                steer: Some(inbox),
+                ..Default::default()
+            },
+        );
+        let mut events = Vec::new();
+        let mut stream = agent.run("do the thing".into());
+        while let Some(ev) = stream.next().await {
+            events.push(ev);
+        }
+        drop(stream);
+        let reqs = seen.lock().unwrap().clone();
+        (reqs, events)
+    }
+
+    #[tokio::test]
+    async fn a_steer_reaches_the_next_request_of_the_same_turn() {
+        let (reqs, _) = run().await;
+        assert_eq!(reqs.len(), 2, "expected a second round trip");
+
+        let landed = reqs[1].messages.iter().any(|m| {
+            m.content.iter().any(|b| {
+                matches!(b, ContentBlock::Text { text } if text.contains("keep the patch small"))
+            })
+        });
+        assert!(landed, "the steer never reached the model");
+
+        let in_first = reqs[0].messages.iter().any(|m| {
+            m.content.iter().any(|b| {
+                matches!(b, ContentBlock::Text { text } if text.contains("keep the patch small"))
+            })
+        });
+        assert!(!in_first, "it cannot reach a request that was already sent");
+    }
+
+    #[tokio::test]
+    async fn the_ui_is_told_where_the_steer_landed() {
+        let (_, events) = run().await;
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, AgentEvent::Steered { text } if text == "actually, keep the patch small")),
+            "a Steered event should mark the point it was folded in"
+        );
+    }
+
+    /// The steer is framed as an interjection, not passed off as a fresh
+    /// request — otherwise "skip the tests" reads as the whole new task.
+    #[tokio::test]
+    async fn the_steer_is_framed_as_an_adjustment() {
+        let (reqs, _) = run().await;
+        let text = reqs[1]
+            .messages
+            .iter()
+            .flat_map(|m| m.content.iter())
+            .filter_map(|b| match b {
+                ContentBlock::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .find(|t| t.contains("keep the patch small"))
+            .expect("steer present");
+        assert!(text.contains("[wingman steer]"));
+        assert!(text.contains("not a new task"));
+    }
+
+    /// Every `tool_use` must still be answered by a `tool_result`. Splicing a
+    /// user message into the wrong place would break that and make the next
+    /// request malformed.
+    #[tokio::test]
+    async fn splicing_a_steer_leaves_the_history_well_formed() {
+        let (reqs, _) = run().await;
+        let uses = reqs[1]
+            .messages
+            .iter()
+            .flat_map(|m| m.content.iter())
+            .filter(|b| matches!(b, ContentBlock::ToolUse { .. }))
+            .count();
+        let results = reqs[1]
+            .messages
+            .iter()
+            .flat_map(|m| m.content.iter())
+            .filter(|b| matches!(b, ContentBlock::ToolResult { .. }))
+            .count();
+        assert_eq!(uses, results, "unanswered tool_use after splicing a steer");
+    }
+}

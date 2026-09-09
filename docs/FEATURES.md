@@ -114,6 +114,12 @@ Wingman different; this is everything else it does.
   rather than only advising. Nudging is right for an interactive session where
   someone can hit Esc; it is not a control for `wingman pilot`, a subagent, or
   a `--print` run in CI. Set `loop_abort_at = 0` to disable.
+- **Steering a running turn.** Type while the agent is working and press
+  Enter: the message is folded into the turn at the next provider round-trip
+  instead of starting a new one. Previously the only way to redirect was
+  Ctrl+C and retype, which threw away everything the turn had established. The
+  model is told the message arrived mid-work, so "actually, keep the patch
+  small" reads as an adjustment rather than a new task.
 - **Web tools.** Built-in `web_fetch` (URL → text) and `web_search`
   (DuckDuckGo HTML, no API key) tools pair for "look something up".
 - **Atomic multi-file patches.** The `apply_patch` tool applies a
