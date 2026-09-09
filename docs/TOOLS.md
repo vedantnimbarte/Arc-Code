@@ -60,6 +60,11 @@ Read a file and return its content with line numbers.
 **Notes:**
 - Absolute path required.
 - `.ipynb` files are parsed; cells returned as fenced code blocks + markdown.
+- `.pdf` files have their text extracted, so a spec or design doc handed over
+  as a PDF is readable rather than "refusing to read binary file". Text only:
+  layout and images are dropped. A scan with no text layer says it needs OCR
+  instead of returning an empty string a model would read as an empty
+  document. Behind the default-on `pdf` build feature.
 - Output truncated per `tool_output_max_lines` (head + tail).
 
 **Example:**
@@ -980,3 +985,20 @@ The agent can see errors and typically responds by adjusting the request or usin
 3. **Batch reads** — if you need multiple files, read them in sequence; async overhead is minimal.
 4. **RAG first** — for code understanding, use `semantic_search` before grep; embeddings are faster than regex on large codebases.
 5. **Shell commands** — cache output (don't re-run `cargo build` multiple times; save the result and reference it).
+
+### `tool_search` / `tool_call`
+
+Registered only when `[tools].defer` actually withholds something. See
+[CONFIGURATION.md](CONFIGURATION.md) for the setting and
+[FEATURES.md](FEATURES.md) for why.
+
+`tool_search(query)` returns the matching deferred tools with their full input
+schemas; `tool_call(name, arguments)` invokes one. `tool_call` exists because
+a model cannot emit a `tool_use` block for a tool that was not in the request
+— knowing the schema is not enough, the provider validates against the list it
+was given — so discovery needs a matching invocation path.
+
+**Permission:** the wrapper needs nothing; the wrapped call is gated on its own
+capability inside `dispatch`, exactly as a direct call would be. `tool_call`
+refuses to invoke itself or `tool_search`, and cannot reach a tool removed by
+`[tools].preset` or `disabled_tools` — those unregister rather than hide.

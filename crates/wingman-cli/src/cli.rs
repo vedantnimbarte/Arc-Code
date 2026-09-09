@@ -199,7 +199,25 @@ pub enum Command {
     /// Health check: config, provider credentials, local servers, the semantic
     /// index, language servers on PATH, and git/gh tooling.
     #[command(display_order = 3)]
-    Doctor,
+    Doctor {
+        /// Repair what can be repaired: rename config keys that are
+        /// unambiguous misspellings of real ones, after backing the file up
+        /// beside itself as `config.toml.bak-<timestamp>`.
+        ///
+        /// Only unambiguous renames are applied. A key nothing matches is
+        /// reported and left alone, because guessing at it is how a repair
+        /// tool loses someone's settings.
+        #[arg(long)]
+        fix: bool,
+        /// Config checks only: no probing of providers, servers, or PATH.
+        /// Read-only, fast, and exits non-zero on a problem — the shape CI
+        /// wants for a preflight step.
+        #[arg(long)]
+        lint: bool,
+        /// Emit findings as JSON instead of a checklist.
+        #[arg(long)]
+        json: bool,
+    },
     /// Report the air-gapped / local-only posture (`[privacy].local_only`):
     /// what leaves the machine, verified against config, for compliance.
     #[command(display_order = 33)]
@@ -281,6 +299,11 @@ pub enum Command {
         /// lets any request run arbitrary shell commands on this machine.
         #[arg(long)]
         allow_yolo: bool,
+        /// Print a single-use pairing link so another device can fetch the
+        /// API token once, instead of you carrying a 43-character secret to
+        /// it by hand. Valid for 10 minutes; pairs one device.
+        #[arg(long)]
+        pair: bool,
     },
     /// Distill durable facts from a past session into a pending-review file
     /// (`.wingman/pending-memories.md`). Uses the fast model when configured.
@@ -1109,7 +1132,13 @@ pub async fn run() -> Result<ExitCode> {
         Some(Command::Logout { provider }) => commands::login::logout(provider).await,
         Some(Command::Discover) => commands::discover::run().await,
         Some(Command::Notify) => commands::notify::run(),
-        Some(Command::Doctor) => commands::doctor::run(load_config()?).await,
+        Some(Command::Doctor { fix, lint, json }) => {
+            // Deliberately not `load_config()?`: a config with a bad key
+            // fails to load, and that is the exact case doctor exists to
+            // repair. Bailing out here would make the tool useless precisely
+            // when it is needed.
+            commands::doctor::run(load_config().unwrap_or_default(), fix, lint, json).await
+        }
         Some(Command::Attest) => commands::attest::run(load_config()?).await,
         Some(Command::Context { json }) => commands::context::run(load_config()?, json).await,
         Some(Command::Acp) => {
@@ -1126,6 +1155,7 @@ pub async fn run() -> Result<ExitCode> {
             init_token,
             list,
             allow_yolo,
+            pair,
         }) => {
             crate::serve::run(
                 load_config()?,
@@ -1134,6 +1164,7 @@ pub async fn run() -> Result<ExitCode> {
                     init_token,
                     list,
                     allow_yolo,
+                    pair,
                 },
             )
             .await

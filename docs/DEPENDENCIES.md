@@ -79,6 +79,7 @@ Each of these is an `[advisories].ignore` entry in `.cargo/audit.toml`.
 | RUSTSEC-2025-0009 | `ring` 0.17.9 | AES functions may panic under overflow checking. Fixed in ring ≥ 0.17.12, which needs `cc ^1.2.8`; we are held at `cc` 1.0.x by `tree-sitter-javascript` 0.21.4 (`cc = "~1.0.90"`). | The tree-sitter 0.22 → 0.23 migration lands. This is the real blocker, not ring. |
 | RUSTSEC-2024-0436 | `paste` 1.0.15 | Unmaintained proc-macro, pulled transitively by `tokenizers` → `fastembed`. No first-party code touches it. | `fastembed`/`tokenizers` drop it upstream. |
 | RUSTSEC-2026-0002, RUSTSEC-2026-0253 | `lru` 0.12.5 | Two unsoundness advisories (`IterMut` stacked-borrows; panic safety in `pop()`). Pinned by `ratatui` 0.29.0 for its internal line-wrap cache; we never call `lru` directly. | `ratatui` bumps its `lru` dependency. |
+| RUSTSEC-2026-0192 | `ttf-parser` 0.25.1 | Unmaintained font parser, reached only through `pdf-extract` (glyph-to-character mapping during text extraction). No first-party code touches it. | `pdf-extract` moves to a maintained parser, or the `pdf` feature is dropped. |
 
 ## Policy
 

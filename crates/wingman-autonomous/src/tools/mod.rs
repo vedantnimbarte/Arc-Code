@@ -7,6 +7,22 @@
 //! `wingman-tools::builtin` and are registered alongside these by
 //! [`crate::manager::build_manager_registry`].
 
+/// The manager's orchestration tools.
+///
+/// These are pollers and bookkeeping: the manager re-issues the same call each
+/// tick until a worker changes the state it is asking about, so identical
+/// repetition is normal operation rather than a loop. Named here so the
+/// exemption cannot drift away from the set of tools it is about.
+pub const ORCHESTRATION_TOOLS: &[&str] = &[
+    "add_task",
+    "assign_task",
+    "reassign_task",
+    "abort_task",
+    "finalize_task",
+    "message_agent",
+    "run_acceptance",
+];
+
 mod abort_task;
 mod add_task;
 mod assign_task;

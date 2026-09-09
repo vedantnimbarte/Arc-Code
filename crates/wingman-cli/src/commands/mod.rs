@@ -13,6 +13,7 @@ pub mod diff_annotate;
 pub mod discover;
 pub mod distill;
 pub mod doctor;
+pub mod doctor_repair;
 pub mod explain;
 pub mod golden;
 pub mod headless;

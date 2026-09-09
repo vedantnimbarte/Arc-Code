@@ -67,6 +67,49 @@ repeat_thresholds = [3, 5, 8]
 # launder it. Trailing `*` matches by prefix.
 repeat_exempt = ["update_tasks", "task_complete"]
 
+# The ceiling on repetition, and the one place a turn is *ended* over it.
+#
+# `repeat_thresholds` above only ever sees a run of identical calls — its
+# chain resets the moment the arguments change, so an alternating
+# `grep X -> read_file Y -> grep X -> read_file Y` cycle is invisible to it,
+# and it only ever advises. That is right for an interactive session where
+# someone is watching and can hit Esc. It is not a control for `wingman
+# pilot`, a subagent, or a --print run in CI, any of which will otherwise
+# spend the whole turn budget on a call whose answer stopped changing.
+#
+# This window counts how often the same call appears among the last N,
+# whatever came in between: a warning at `loop_warn_at`, and the turn ends at
+# `loop_abort_at` with stop reason `loop_detected`. Set loop_abort_at = 0 to
+# disable.
+loop_window = 24
+loop_warn_at = 4
+loop_abort_at = 8
+# Tools the cycle guard ignores. Some tools repeat with identical arguments
+# because that is what they are for: "is the job done yet" is byte-identical
+# every time and its answer changes only when something else changes the
+# world. An MCP status-poll tool is the common case. Trailing `*` matches by
+# prefix. (`wingman pilot`'s manager exempts its own orchestration tools for
+# the same reason, without needing this key.)
+loop_exempt = ["update_tasks", "task_complete"]
+
+# Withhold these tools' schemas from every request; the model reaches them
+# through `tool_search` (find by keyword, get the schema) and `tool_call`
+# (invoke by name) instead. Trailing `*` matches by prefix. Empty = every
+# tool is in every request.
+#
+# `preset` below is the static answer to the same cost: it decides what a
+# session is *for* and drops the rest. This is the dynamic one, for tools
+# worth having but rarely used. An MCP server's twenty schemas are billed on
+# every turn and wanted on perhaps one, so this trades a round trip in that
+# turn for the schemas in the other forty-nine.
+#
+# Deferring is not disabling: a deferred tool is registered, permission-gated
+# and callable exactly as before, and `tool_call` dispatches it through the
+# same gate as a direct call. The two meta-tools cost two schemas, so this is
+# a saving only when it hides more than it adds — `wingman context` reports
+# the real number either way, including them.
+defer = []                    # e.g. ["mcp__*"]
+
 # Seconds `ask_user` waits for an answer from the Wingman desktop popup when
 # it is running. 0 (default) keeps the tool's long-standing behaviour: with no
 # interactive terminal it returns "proceed with your best judgment" at once.

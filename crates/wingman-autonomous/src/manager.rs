@@ -118,6 +118,21 @@ pub fn build_manager(
         model,
         system: Some(system),
         max_turns: 32,
+        // The manager is a poller, not a chatterer. It re-reads the run state
+        // each tick and re-issues `assign_task {"task_id": "t1"}` for as long
+        // as t1 is not Done — the call is byte-identical every time, and the
+        // answer changes only when a *worker* changes it. Counting that as a
+        // loop would abort the one design where repetition is the mechanism.
+        //
+        // The guard stays armed for everything else the manager might do, and
+        // fully armed for the worker agents, which are the ones that actually
+        // burn tokens going in circles.
+        loop_guard: wingman_core::LoopGuard::default().with_exempt(
+            crate::tools::ORCHESTRATION_TOOLS
+                .iter()
+                .map(|s| (*s).to_string())
+                .collect(),
+        ),
         ..Default::default()
     };
     AgentLoop::new(provider, registry, cfg)

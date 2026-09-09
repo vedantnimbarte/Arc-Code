@@ -212,6 +212,57 @@ pub struct ToolsConfig {
     /// `grep X`. Supports a trailing `*` wildcard.
     #[serde(default = "default_repeat_exempt")]
     pub repeat_exempt: Vec<String>,
+    /// How many recent tool calls the cycle guard keeps in its window
+    /// (default 24).
+    ///
+    /// `repeat_thresholds` above only ever sees a *run* of identical calls;
+    /// its chain resets as soon as the arguments change, so an alternating
+    /// `grep X → read_file Y → grep X → read_file Y` cycle is invisible to
+    /// it. This window counts how often the same call appears among the last
+    /// N, regardless of what came between.
+    #[serde(default = "default_loop_window")]
+    pub loop_window: usize,
+    /// Occurrences within `loop_window` at which the model is told it is
+    /// looping (default 4; `0` disables the warning).
+    #[serde(default = "default_loop_warn_at")]
+    pub loop_warn_at: usize,
+    /// Occurrences within `loop_window` at which the turn is *ended*
+    /// (default 8; `0` disables the guard entirely).
+    ///
+    /// The one place Wingman stops a turn over repetition rather than
+    /// advising about it. An advisory is right for an interactive session
+    /// where someone is watching and can hit Esc; it is not a control for
+    /// `wingman pilot`, a subagent, or a `--print` run in CI, any of which
+    /// will otherwise spend the whole `max_turns` budget on a call whose
+    /// answer stopped changing eight repetitions ago.
+    #[serde(default = "default_loop_abort_at")]
+    pub loop_abort_at: usize,
+    /// Tools the cycle guard ignores: pollers and bookkeeping (default
+    /// `["update_tasks", "task_complete"]`). Trailing `*` matches by prefix.
+    ///
+    /// Some tools repeat with identical arguments because that is what they
+    /// are *for*. "Is the job done yet" is byte-identical every time and its
+    /// answer changes only when something else changes the world. Name those
+    /// here — an MCP server's status-poll tool is the common case — or the
+    /// guard will end the turn for doing its job.
+    #[serde(default = "default_loop_exempt")]
+    pub loop_exempt: Vec<String>,
+    /// Tool-name patterns whose schemas are withheld from every request and
+    /// reached through `tool_search` / `tool_call` instead. A trailing `*`
+    /// matches by prefix. Empty (default) puts every tool in every request.
+    ///
+    /// `preset` above is the static answer to the same cost — it decides what
+    /// a session is *for* and drops the rest. This is the dynamic one, for
+    /// tools worth having but rarely used: an MCP server's twenty schemas are
+    /// billed on all of a session's turns and wanted on perhaps one, so
+    /// `defer = ["mcp__*"]` trades a round trip in that turn for the schemas
+    /// in the other forty-nine.
+    ///
+    /// Deferring is not disabling: a deferred tool is registered, gated, and
+    /// callable exactly as before. `wingman context` reports what the change
+    /// bought.
+    #[serde(default)]
+    pub defer: Vec<String>,
     /// Restrict the session to one named tool preset (`--preset`, or
     /// `[tools].preset` in config). Empty = every registered tool.
     ///
@@ -330,6 +381,22 @@ fn default_repeat_exempt() -> Vec<String> {
     vec!["update_tasks".into(), "task_complete".into()]
 }
 
+fn default_loop_window() -> usize {
+    24
+}
+
+fn default_loop_warn_at() -> usize {
+    4
+}
+
+fn default_loop_abort_at() -> usize {
+    8
+}
+
+fn default_loop_exempt() -> Vec<String> {
+    default_repeat_exempt()
+}
+
 /// A user-defined command tool (see [`ToolsConfig::custom`]).
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -386,6 +453,11 @@ impl Default for ToolsConfig {
             tool_timeout_secs: default_tool_timeout(),
             repeat_thresholds: default_repeat_thresholds(),
             repeat_exempt: default_repeat_exempt(),
+            loop_window: default_loop_window(),
+            loop_warn_at: default_loop_warn_at(),
+            loop_abort_at: default_loop_abort_at(),
+            loop_exempt: default_loop_exempt(),
+            defer: Vec::new(),
             preset: String::new(),
             presets: std::collections::HashMap::new(),
             spill_tool_output: true,

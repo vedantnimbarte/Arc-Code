@@ -485,6 +485,10 @@ async fn run_turn(
                     // closest honest mapping — the agent declined to call it
                     // done rather than finishing cleanly.
                     AgentStop::GateFailed => "refusal",
+                    // Same reading: the agent stopped itself rather than
+                    // finishing, and ACP has no vocabulary for "it was going
+                    // in circles".
+                    AgentStop::LoopDetected => "refusal",
                     AgentStop::Error => "refusal",
                 };
                 break;

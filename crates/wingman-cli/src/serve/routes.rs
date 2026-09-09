@@ -11,6 +11,7 @@ use serde_json::json;
 use tokio::net::TcpStream;
 
 use super::http::{self, Request};
+use super::pairing;
 use super::projects::Project;
 use super::{
     admin, auth, board, notifications, pilot, projects, push, sessions, table, timeline, ui,
@@ -47,6 +48,13 @@ pub async fn handle(state: Arc<ServeState>, mut sock: TcpStream) -> std::io::Res
     // before setting anything), and sign-out must work for a browser holding a
     // cookie the server has stopped accepting.
     match (req.method.as_str(), req.segments().as_slice()) {
+        // Redeeming a pairing code *is* the authentication, so it sits ahead
+        // of the gate for the same reason sign-in does. It is the only
+        // unauthenticated route that can return a credential; see
+        // `serve::pairing` for why that is safe.
+        ("POST", ["v1", "pair", "redeem"]) => {
+            return pairing::redeem(&state, &req, &mut sock).await
+        }
         ("POST", ["v1", "ui", "session"]) => return ui::sign_in(&state, &req, &mut sock).await,
         ("DELETE", ["v1", "ui", "session"]) => return ui::sign_out(&mut sock).await,
         _ => {}
@@ -279,6 +287,7 @@ mod tests {
             token: token.map(str::to_string),
             ceiling: PermissionMode::AutoEdit,
             started: Instant::now(),
+            pairing: std::sync::Mutex::new(None),
             turns: Semaphore::new(1),
         });
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

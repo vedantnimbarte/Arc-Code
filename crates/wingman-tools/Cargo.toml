@@ -16,6 +16,16 @@ wingman-skills = { workspace = true }
 wingman-session = { workspace = true }
 wingman-lsp = { workspace = true }
 wingman-ts = { workspace = true, optional = true }
+# Text extraction only: a spec or design doc handed over as a PDF is ordinary
+# coding context, and the alternative is the model being told "refusing to
+# read binary file".
+#
+# The 0.12 floor is a security floor, not a feature one: earlier releases pin
+# `lopdf` 0.36, which RUSTSEC-2026-0187 reports as a stack overflow on deeply
+# nested PDF objects — unbounded recursion, so it aborts rather than panicking
+# and `catch_unwind` in `read_file` cannot contain it. 0.12 carries `lopdf`
+# >= 0.42, where the recursion is bounded.
+pdf-extract = { version = "0.12", optional = true }
 
 tokio = { workspace = true }
 futures = { workspace = true }
@@ -45,8 +55,12 @@ windows-sys = { version = "0.59", features = [
 ] }
 
 [features]
-default = ["treesitter"]
+default = ["treesitter", "pdf"]
 treesitter = ["dep:wingman-ts", "wingman-ts/treesitter"]
+# Text extraction from PDFs in `read_file`. Pure Rust, so unlike `treesitter`
+# it needs no C toolchain — gated only so a build that will never be handed a
+# PDF need not carry the parser.
+pdf = ["dep:pdf-extract"]
 
 
 [dev-dependencies]

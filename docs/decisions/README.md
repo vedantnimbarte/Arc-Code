@@ -64,3 +64,4 @@ pointer. The history of what we believed is the point.
 | [0017](0017-notifications-are-a-file-inbox.md) | Desktop notifications are a file inbox, and approvals bypass it | accepted |
 | [0018](0018-the-notifier-is-not-a-workspace-member.md) | The desktop notifier is excluded from the workspace | accepted |
 | [0019](0019-the-notifier-ships-an-unsigned-installer.md) | The notifier ships an installer, and it is unsigned | accepted |
+| [0020](0020-repetition-is-guarded-twice.md) | Repetition is guarded twice, and only the second one stops a turn | accepted |

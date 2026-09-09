@@ -559,8 +559,17 @@ async fn run_inner(
                             None => exp.prompt,
                         };
                         ui.composer.busy = true;
+                        let steer = a.steer_handle();
                         draw(terminal, &ui)?;
-                        run_turn(terminal, a, &mut events, &mut ui, final_prompt).await?;
+                        run_turn(
+                            terminal,
+                            a,
+                            &mut events,
+                            &mut ui,
+                            final_prompt,
+                            steer.clone(),
+                        )
+                        .await?;
                         // Persist after every turn: an LLM round-trip already
                         // took seconds, so one small atomic write is noise, and
                         // it means an external kill/SIGHUP between turns can't
@@ -1540,6 +1549,7 @@ async fn run_turn(
     events: &mut EventStream,
     ui: &mut UiState,
     prompt: String,
+    steer: Option<std::sync::Arc<wingman_core::SteerInbox>>,
 ) -> Result<()> {
     // Persistence is the agent loop's job now — it is the only place that
     // knows what actually went into a request. This function only renders.
@@ -1557,6 +1567,32 @@ async fn run_turn(
                         ui.transcript.push(TranscriptItem::System(
                             "(cancel mid-turn arrives in M2; finishing current step)".into(),
                         ));
+                        draw(terminal, ui)?;
+                    } else if let Some(inbox) = &steer {
+                        // Typing during a turn steers it. The alternative — a
+                        // dead keyboard until the turn ends — is why the only
+                        // way to redirect used to be Ctrl+C and retype, which
+                        // throws away everything the turn had established.
+                        match k.code {
+                            KeyCode::Enter if !ui.composer.input.trim().is_empty() => {
+                                let msg = ui.composer.take_input();
+                                inbox.push(msg);
+                                // Not echoed here: the loop emits `Steered`
+                                // when it actually folds the message in, and
+                                // showing it twice would misreport *when* the
+                                // model saw it.
+                                ui.slash.update(&ui.composer.input);
+                            }
+                            KeyCode::Backspace => {
+                                ui.composer.input.pop();
+                                ui.slash.update(&ui.composer.input);
+                            }
+                            KeyCode::Char(c) => {
+                                ui.composer.input.push(c);
+                                ui.slash.update(&ui.composer.input);
+                            }
+                            _ => {}
+                        }
                         draw(terminal, ui)?;
                     }
                 }
@@ -1595,6 +1631,9 @@ async fn run_turn(
 
 fn apply_event(event: &AgentEvent, transcript: &mut Transcript, status: &mut StatusLine) {
     match event {
+        AgentEvent::Steered { text } => {
+            transcript.push(TranscriptItem::System(format!("steered: {text}")));
+        }
         AgentEvent::TextDelta { text } => transcript.append_assistant_text(text),
         AgentEvent::ThinkingDelta { text } => transcript.append_thinking(text),
         AgentEvent::ToolStart { name, input, .. } => {

@@ -9,10 +9,12 @@ pub mod agent;
 pub mod checkpoint;
 pub mod context_log;
 pub mod error;
+pub mod loopguard;
 pub mod message;
 pub mod pricing;
 pub mod provider;
 pub mod spill;
+pub mod steer;
 pub mod stream;
 pub mod tokens;
 pub mod tool;
@@ -24,6 +26,7 @@ pub use agent::{
 };
 pub use context_log::{ContextFact, ContextSink};
 pub use error::{Result, WingmanError};
+pub use loopguard::{LoopGuard, Verdict as LoopVerdict};
 pub use message::{ContentBlock, Message, Role};
 pub use pricing::{price_for, Price};
 pub use provider::{
@@ -31,12 +34,13 @@ pub use provider::{
     ReasoningEffort,
 };
 pub use spill::SpillStore;
+pub use steer::SteerInbox;
 pub use stream::{ProviderEventStream, StopReason, StreamEvent};
 pub use tokens::{
     estimate_history_tokens, estimate_tokens, CompactPlan, Compactor, ToolOutputBudget,
     ToolResultPruner,
 };
-pub use tool::ToolSpec;
+pub use tool::{canonical_args, ToolSpec};
 
 /// Install the process-wide rustls crypto provider (ring) exactly once.
 ///

@@ -47,6 +47,10 @@ Welcome to Wingman's technical documentation. This index guides you to the right
   - Read this if: you want pilot runs steerable from anywhere, or a scriptable surface over the CLI.
   - Build order and design record: [HTTP-API-PLAN.md](HTTP-API-PLAN.md).
 
+- **[BRIDGES.md](BRIDGES.md)** — What to reach through MCP, ACP or the HTTP API instead of building into Wingman: chat channels via OpenClaw, browser automation via Playwright MCP, and the reasoning for each.
+  - Best for: "Wingman should also do X" where X is not about understanding code.
+  - Read this if: you want Wingman in Telegram or Slack, or want the agent to drive a browser.
+
 - **[WEB-UI.md](WEB-UI.md)** — The web control panel `wingman serve` hosts: a React app embedded in the binary, alongside the TUI rather than replacing it.
   - Best for: driving the board, runs, and config from a browser or a phone.
   - Read this if: you want the board, runs, config or a chat from a browser — or a binary is serving "the web UI was not built".
