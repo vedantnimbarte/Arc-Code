@@ -23,7 +23,7 @@ anyhow = { workspace = true }
 serde_json = { workspace = true }
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider"] }
 serde = { workspace = true }
-ratatui = "0.29"
+ratatui = "0.30"
 crossterm = { version = "0.28", features = ["event-stream"] }
 ignore = "0.4"
 nucleo-matcher = "0.3"

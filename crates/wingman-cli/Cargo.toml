@@ -56,7 +56,7 @@ subtle = "2"
 urlencoding = { workspace = true }
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls-no-provider"] }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
-ratatui = "0.29"
+ratatui = "0.30"
 crossterm = "0.28"
 
 # `setsid` for detaching a `-d` background run from the controlling terminal.
